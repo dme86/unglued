@@ -1,0 +1,133 @@
+<!doctype html><meta charset="utf-8">
+<title>unglued – Edit {{.ID}}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{ --bg:#0b0c0e; --fg:#e6e6e6; --muted:#c8c8c8; --card:#0f1115; --border:#1b1f2a; --link:#9ecbff; }
+@media (prefers-color-scheme:light){
+  :root{ --bg:#ffffff; --fg:#111; --muted:#444; --card:#f8f9fb; --border:#e5e7eb; --link:#0b57d0; }
+}
+body{font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,sans-serif;margin:0;background:var(--bg);color:var(--fg)}
+main{max-width:900px;margin:0 auto;padding:24px}
+label{display:block;margin:.5rem 0 .25rem;color:var(--muted)}
+textarea,input,select,button{width:100%;padding:.75rem;border-radius:12px;border:1px solid var(--border);background:var(--card);color:var(--fg)}
+button{cursor:pointer;font-weight:600}
+.card{background:var(--card);padding:20px;border:1px solid var(--border);border-radius:16px;box-shadow:0 6px 20px rgba(0,0,0,.12)}
+a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
+.actions{display:flex;gap:12px;align-items:center;justify-content:flex-end}
+</style>
+<main>
+  <h1>Edit <code>{{.ID}}</code></h1>
+  <div class="card">
+  <form method="post" action="/p/{{.ID}}/edit{{if .Key}}?key={{.Key}}{{end}}">
+
+      <label for="lang">Sprache</label>
+      <select id="lang" name="lang">
+        {{range .Langs}}<option value="{{.}}" {{if eq $.Lang .}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
+
+      <label for="author">Name (optional)</label>
+      <input id="author" name="author" value="{{.Author}}" placeholder="Dein Name oder Nick">
+
+      <label for="code">Code / Text</label>
+      <textarea id="code" name="code" rows="18" class="codeeditor"
+  spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off">{{.Code}}</textarea>
+
+
+      <div class="actions">
+        <a href="/p/{{.ID}}">Abbrechen</a>
+        <button type="submit">Speichern</button>
+      </div>
+    </form>
+  </div>
+
+<script>
+(function(){
+  var ta = document.getElementById('code');
+  if(!ta) return;
+
+  var TAB = "  "; // Soft-Tab: 2 Spaces (ggf. "    " für 4)
+  function getLineStart(text, pos){
+    var i = text.lastIndexOf("\n", pos-1);
+    return i === -1 ? 0 : i+1;
+  }
+
+  ta.addEventListener('keydown', function(e){
+    // Ctrl/Cmd+Enter -> submit
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      if (ta.form) ta.form.submit();
+      return;
+    }
+
+    // Tab/Shift+Tab -> indent/outdent
+    if (e.key === "Tab") {
+      e.preventDefault();
+      var val = ta.value, start = ta.selectionStart, end = ta.selectionEnd;
+
+      // Selektion über mehrere Zeilen?
+      if (start !== end) {
+        var selStart = getLineStart(val, start);
+        var sel = val.slice(selStart, end);
+        var lines = sel.split("\n");
+
+        if (e.shiftKey) {
+          // ausrücken
+          for (var i=0;i<lines.length;i++){
+            if (lines[i].startsWith(TAB)) lines[i] = lines[i].slice(TAB.length);
+            else if (lines[i].startsWith("\t")) lines[i] = lines[i].slice(1);
+          }
+        } else {
+          // einrücken
+          for (var i=0;i<lines.length;i++){
+            lines[i] = TAB + lines[i];
+          }
+        }
+
+        var replaced = lines.join("\n");
+        var before = val.slice(0, selStart);
+        var after  = val.slice(end);
+        ta.value = before + replaced + after;
+
+        // Selektion neu setzen: umfasst weiter alle geänderten Zeilen
+        ta.selectionStart = selStart;
+        ta.selectionEnd = selStart + replaced.length;
+      } else {
+        // Caret-Indent
+        var before = val.slice(0, start);
+        var after  = val.slice(end);
+        if (e.shiftKey) {
+          // ausrücken an Zeilenanfang
+          var ls = getLineStart(val, start);
+          if (val.slice(ls, ls+TAB.length) === TAB) {
+            ta.value = val.slice(0, ls) + val.slice(ls+TAB.length);
+            var delta = TAB.length;
+            ta.selectionStart = ta.selectionEnd = Math.max(start - delta, ls);
+          } else if (val[ls] === "\t") {
+            ta.value = val.slice(0, ls) + val.slice(ls+1);
+            ta.selectionStart = ta.selectionEnd = Math.max(start - 1, ls);
+          }
+        } else {
+          ta.value = before + TAB + after;
+          ta.selectionStart = ta.selectionEnd = start + TAB.length;
+        }
+      }
+      return;
+    }
+
+    // Enter -> Auto-Indent
+    if (e.key === "Enter") {
+      e.preventDefault();
+      var val = ta.value, start = ta.selectionStart, end = ta.selectionEnd;
+      var ls = getLineStart(val, start);
+      var linePrefix = val.slice(ls, start);
+      var m = linePrefix.match(/^[ \t]+/);
+      var indent = m ? m[0] : "";
+      var insert = "\n" + indent;
+      ta.value = val.slice(0, start) + insert + val.slice(end);
+      ta.selectionStart = ta.selectionEnd = start + insert.length;
+      return;
+    }
+  });
+})();
+</script>
+</main>

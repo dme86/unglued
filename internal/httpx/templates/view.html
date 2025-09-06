@@ -1,0 +1,260 @@
+<!doctype html><meta charset="utf-8">
+<title>unglued – {{.ID}}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<style>
+{{if eq .Theme "light"}}
+:root{
+  --bg:#ffffff; --fg:#111; --muted:#444; --card:#f8f9fb; --border:#e5e7eb; --link:#0b57d0;
+  --hlbg:#fff3bf; --hlline:#e6b800;
+}
+{{else}}
+:root{
+  --bg:#0b0c0e; --fg:#e6e6e6; --muted:#c8c8c8; --card:#0f1115; --border:#1b1f2a; --link:#9ecbff;
+  --hlbg:rgba(255,210,87,.28); --hlline:#ffd257;
+}
+{{end}}
+body{font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,sans-serif;margin:0;background:var(--bg);color:var(--fg)}
+main{max-width:900px;margin:0 auto;padding:24px}
+.card{background:var(--card);padding:20px;border:1px solid var(--border);border-radius:16px;box-shadow:0 6px 20px rgba(0,0,0,.12)}
+header{display:flex;gap:12px;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+a{color:var(--link);text-decoration:none}
+a:hover{text-decoration:underline}
+.badge{font-size:12px;opacity:.8}
+.button{border:1px solid var(--border);background:var(--card);padding:.35rem .6rem;border-radius:10px}
+
+/* Codeblock */
+.codeframe{overflow:auto;border-radius:12px;border:1px solid var(--border)}
+.codeblock{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  white-space:pre;
+  font-size:13px;
+  line-height:1.2;
+}
+.line{
+  display:flex;
+  padding:0 .5rem;
+  scroll-margin-top:72px;
+  align-items:center;
+  gap:8px;
+}
+.line .ln{
+  display:flex; align-items:center; justify-content:flex-end;
+  width:3.2ch;
+  text-decoration:none; opacity:.55; padding-right:.4rem; user-select:none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size:13px; line-height:1.2;
+}
+.line .code{ white-space:pre; display:block; font:inherit; line-height:inherit; }
+
+/* Highlights */
+.line.hl, .line:target{ background:var(--hlbg); box-shadow: inset 4px 0 0 var(--hlline) }
+.line.hl .ln, .line:target .ln{ opacity:1; color:var(--hlline); font-weight:700 }
+.meta{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+.codeeditor{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  tab-size: 2;                /* Darstellung von \t */
+  -moz-tab-size: 2;
+  white-space: pre;
+  resize: vertical;
+}
+
+
+</style>
+
+<main>
+  <header>
+    <div>Paste <strong>{{.ID}}</strong> <span class="badge">Sprache: {{.Lang}}</span></div>
+    <div class="meta">
+      <div class="badge">Ablauf: {{.ExpiresAt}}</div>
+      {{if .HasHistory}}<div class="badge">Version {{.VIndex}} / {{.VTotal}} – Autor: {{.VAuthor}} – {{.VTime}}</div>{{end}}
+      <nav>
+        {{if eq .Theme "light"}}
+          <a class="button" href="?t=dark{{if .HL}}&hl={{.HL}}{{end}}{{if .HasHistory}}&v={{.VIndex}}{{end}}"  title="zu Dark wechseln">Dark</a>
+          <span class="badge">• Aktuell: Light</span>
+        {{else}}
+          <a class="button" href="?t=light{{if .HL}}&hl={{.HL}}{{end}}{{if .HasHistory}}&v={{.VIndex}}{{end}}" title="zu Light wechseln">Light</a>
+          <span class="badge">• Aktuell: Dark</span>
+        {{end}}
+	{{if .Editable}} • <a class="button" href="{{.EditURL}}">Editieren</a>{{end}}
+      </nav>
+    </div>
+  </header>
+
+  <div class="card">
+    {{.HTML}}
+  </div>
+
+  <p>
+    <a href="/">Neue Paste erstellen</a>
+    • <a href="/raw/{{.ID}}">Raw</a>
+    {{if .HL}}• <span class="badge">Markiert: {{.HL}}</span>{{end}}
+    {{if .HasHistory}}
+      • <span class="badge">Version wechseln:</span>
+      {{if gt .VIndex 1}}<a href="/p/{{.ID}}?v={{dec .VIndex}}">« Vorherige</a>{{end}}
+      {{if lt .VIndex .VTotal}} {{if gt .VIndex 1}}•{{end}} <a href="/p/{{.ID}}?v={{inc .VIndex}}">Nächste »</a>{{end}}
+    {{end}}
+  </p>
+
+  <!-- JS: hl=… / #L… markieren & Click-Range -->
+  <script>
+  (function(){
+    function parseHLParam(str){
+      var set = new Set(); if(!str) return set;
+      var parts = str.split(',');
+      for(var k=0;k<parts.length;k++){
+        var part = parts[k].trim(); if(!part) continue;
+        if(part.indexOf('-') !== -1){
+          var ab = part.split('-',2); var a = +ab[0], b = +ab[1];
+          if(Number.isInteger(a) && Number.isInteger(b)){
+            var lo = Math.min(a,b), hi = Math.max(a,b);
+            for(var i=lo;i<=hi;i++) set.add(i);
+          }
+        } else {
+          var n = +part; if(Number.isInteger(n)) set.add(n);
+        }
+      }
+      return set;
+    }
+    function apply(set){
+      var marked = document.querySelectorAll('.line.hl');
+      for(var i=0;i<marked.length;i++) marked[i].classList.remove('hl');
+      set.forEach(function(n){
+        var el = document.getElementById('L'+n);
+        if(el) el.classList.add('hl');
+      });
+    }
+    var params = new URLSearchParams(location.search);
+    var set = parseHLParam(params.get('hl'));
+    apply(set);
+    if(location.hash.slice(0,2) === '#L'){
+      var nHash = +location.hash.slice(2);
+      if(Number.isInteger(nHash)){ set.add(nHash); apply(set); }
+    }
+    var last = null;
+    var links = document.querySelectorAll('.line .ln');
+    for(var i=0;i<links.length;i++){
+      links[i].addEventListener('click', function(e){
+        e.preventDefault();
+        var n = +this.getAttribute('href').slice(2);
+        if(!Number.isInteger(n)) return;
+        if(e.shiftKey && last !== null){
+          var lo = Math.min(last,n), hi = Math.max(last,n);
+          for(var j=lo;j<=hi;j++) set.add(j);
+        } else {
+          if(set.has(n)) set.delete(n); else set.add(n);
+          last = n;
+        }
+        apply(set);
+        var list = Array.from(set).sort(function(a,b){return a-b;});
+        var out = [];
+        for(var p=0;p<list.length;p++){
+          var q=p;
+          while(q+1<list.length && list[q+1]===list[q]+1) q++;
+          if(q>p) out.push(String(list[p]) + '-' + String(list[q]));
+          else out.push(String(list[p]));
+          p=q;
+        }
+        params.set('hl', out.join(','));
+        var url = location.pathname + '?' + params.toString() + location.hash;
+        history.replaceState(null, '', url);
+      });
+    }
+  })();
+  </script>
+
+
+<script>
+(function(){
+  var ta = document.getElementById('code');
+  if(!ta) return;
+
+  var TAB = "  "; // Soft-Tab: 2 Spaces (ggf. "    " für 4)
+  function getLineStart(text, pos){
+    var i = text.lastIndexOf("\n", pos-1);
+    return i === -1 ? 0 : i+1;
+  }
+
+  ta.addEventListener('keydown', function(e){
+    // Ctrl/Cmd+Enter -> submit
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      if (ta.form) ta.form.submit();
+      return;
+    }
+
+    // Tab/Shift+Tab -> indent/outdent
+    if (e.key === "Tab") {
+      e.preventDefault();
+      var val = ta.value, start = ta.selectionStart, end = ta.selectionEnd;
+
+      // Selektion über mehrere Zeilen?
+      if (start !== end) {
+        var selStart = getLineStart(val, start);
+        var sel = val.slice(selStart, end);
+        var lines = sel.split("\n");
+
+        if (e.shiftKey) {
+          // ausrücken
+          for (var i=0;i<lines.length;i++){
+            if (lines[i].startsWith(TAB)) lines[i] = lines[i].slice(TAB.length);
+            else if (lines[i].startsWith("\t")) lines[i] = lines[i].slice(1);
+          }
+        } else {
+          // einrücken
+          for (var i=0;i<lines.length;i++){
+            lines[i] = TAB + lines[i];
+          }
+        }
+
+        var replaced = lines.join("\n");
+        var before = val.slice(0, selStart);
+        var after  = val.slice(end);
+        ta.value = before + replaced + after;
+
+        // Selektion neu setzen: umfasst weiter alle geänderten Zeilen
+        ta.selectionStart = selStart;
+        ta.selectionEnd = selStart + replaced.length;
+      } else {
+        // Caret-Indent
+        var before = val.slice(0, start);
+        var after  = val.slice(end);
+        if (e.shiftKey) {
+          // ausrücken an Zeilenanfang
+          var ls = getLineStart(val, start);
+          if (val.slice(ls, ls+TAB.length) === TAB) {
+            ta.value = val.slice(0, ls) + val.slice(ls+TAB.length);
+            var delta = TAB.length;
+            ta.selectionStart = ta.selectionEnd = Math.max(start - delta, ls);
+          } else if (val[ls] === "\t") {
+            ta.value = val.slice(0, ls) + val.slice(ls+1);
+            ta.selectionStart = ta.selectionEnd = Math.max(start - 1, ls);
+          }
+        } else {
+          ta.value = before + TAB + after;
+          ta.selectionStart = ta.selectionEnd = start + TAB.length;
+        }
+      }
+      return;
+    }
+
+    // Enter -> Auto-Indent
+    if (e.key === "Enter") {
+      e.preventDefault();
+      var val = ta.value, start = ta.selectionStart, end = ta.selectionEnd;
+      var ls = getLineStart(val, start);
+      var linePrefix = val.slice(ls, start);
+      var m = linePrefix.match(/^[ \t]+/);
+      var indent = m ? m[0] : "";
+      var insert = "\n" + indent;
+      ta.value = val.slice(0, start) + insert + val.slice(end);
+      ta.selectionStart = ta.selectionEnd = start + insert.length;
+      return;
+    }
+  });
+})();
+</script>
+</main>
+

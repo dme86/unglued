@@ -1,4 +1,4 @@
-module gopaste
+module unglued
 
 go 1.25.0
 
