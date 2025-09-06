@@ -39,6 +39,55 @@ a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
 .topbar{display:flex;justify-content:space-between;align-items:baseline;margin:0 0 8px 0}
 .stats{font-size:14px;opacity:.8}
 
+/* Themed modal */
+dialog.modal { 
+  padding: 0;
+  border: 0;
+  background: transparent;       /* let our sheet define colors */
+  color-scheme: dark light;       /* play nice with UA controls */
+}
+dialog.modal::backdrop{
+  background: rgba(0,0,0,.55);
+  backdrop-filter: blur(2px);
+}
+
+/* The inner card */
+.modal .sheet{
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px 20px;
+  max-width: 720px;
+  box-shadow: 0 16px 60px rgba(0,0,0,.45);
+}
+
+/* Title + content */
+.modal h3{ margin: 0 0 .5rem 0; font-size: 18px }
+.modal .muted{
+  color: var(--muted);
+  background: rgba(255,255,255,.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Buttons */
+.modal .actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:12px }
+.modal .btn{
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--fg);
+  padding: .45rem .8rem;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.modal .btn:hover{ filter: brightness(1.05) }
+
+
+
 </style>
 <main>
   <h1>unglued</h1>
@@ -47,6 +96,7 @@ a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
   </div>
   <div class="card">
     <form method="post" action="/paste">
+
       <label for="lang">Sprache</label>
       <select id="lang" name="lang">
         {{range .Langs}}<option value="{{.}}">{{.}}</option>{{end}}
@@ -89,6 +139,65 @@ a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
 
       <small>API: POST /api/paste – JSON-Felder: code, lang, ttl, theme, editable, author.</small>
     </form>
-  </div>
+
+
+    <dialog id="msgDialog" class="modal">
+  <form method="dialog" class="sheet">
+    <h3 id="msgTitle">Message</h3>
+    <pre id="msgBody" class="muted"></pre>
+    <div class="actions">
+      <button class="btn" value="cancel">OK</button>
+    </div>
+  </form>
+</dialog>
+
+
+<script>
+(function () {
+  const form = document.querySelector('form[action="/paste"]');
+  if (!form) return;
+
+  const dlg   = document.getElementById('msgDialog');
+  const title = document.getElementById('msgTitle');
+  const body  = document.getElementById('msgBody');
+
+  function showMsg(t, txt) {
+    title.textContent = t;
+    body.textContent  = txt;
+    dlg.showModal();
+  }
+
+  dlg.addEventListener('close', () => document.getElementById('code')?.focus());
+  dlg.addEventListener('cancel', (e) => { e.preventDefault(); dlg.close(); });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+
+    try {
+      const res = await fetch('/paste', { method: 'POST', body: fd });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        if (txt.toLowerCase().includes('secret')) {
+          showMsg('Potential secrets detected', txt);
+        } else {
+          showMsg('Error', txt);      // <-- statt alert()
+        }
+        return;
+      }
+
+      // Erfolg: Redirect übernehmen
+      if (res.redirected) window.location.href = res.url;
+      else window.location.reload(); // Fallback
+    } catch {
+      showMsg('Network error', 'Bitte später erneut versuchen.');
+    }
+  });
+})();
+
+</script>
+
+
 </main>
 

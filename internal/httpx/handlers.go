@@ -16,6 +16,7 @@ import (
 	"unglued/internal/model"
 	"unglued/internal/render"
 	"unglued/internal/util"
+	"unglued/internal/secrets"
 )
 
 /* ======================
@@ -140,17 +141,31 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func writeSecretBlock(w http.ResponseWriter, fs []secrets.Finding) {
+    w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+    w.WriteHeader(http.StatusBadRequest)
+    _, _ = io.WriteString(w, "Blocked: potential secrets detected:\n"+secrets.Brief(fs, 6))
+}
+
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Bad form", http.StatusBadRequest)
-		return
-	}
+	if err := parseAnyForm(r); err != nil {
+	http.Error(w, "Bad form", http.StatusBadRequest)
+	return
+}
+
 	code := strings.TrimSpace(r.FormValue("code"))
 	lang := strings.TrimSpace(r.FormValue("lang"))
 	ttl := strings.TrimSpace(r.FormValue("ttl"))
 	theme := strings.TrimSpace(r.FormValue("theme"))
 	editable := util.IsTruthy(r.FormValue("editable"))
 	author := strings.TrimSpace(r.FormValue("author"))
+
+if fs := secrets.Scan(code); len(fs) > 0 {
+	writeSecretBlock(w, fs)
+	return
+}
+
+
 	if author == "" {
 		author = readAuthorCookie(r)
 	}
@@ -288,15 +303,22 @@ func (s *Server) handleEditSave(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Forbidden (kein Edit-Zugriff)", http.StatusForbidden)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Bad form", http.StatusBadRequest)
-		return
-	}
+	if err := parseAnyForm(r); err != nil {
+	http.Error(w, "Bad form", http.StatusBadRequest)
+	return
+}
 
 	now := time.Now()
 	code := strings.TrimSpace(r.FormValue("code"))
 	lang := s.normalizeLang(strings.TrimSpace(r.FormValue("lang")))
 	author := strings.TrimSpace(r.FormValue("author"))
+
+if fs := secrets.Scan(code); len(fs) > 0 {
+	writeSecretBlock(w, fs)
+	return
+}
+
+
 	if code == "" {
 		http.Error(w, "Code darf nicht leer sein", http.StatusBadRequest)
 		return
@@ -429,6 +451,12 @@ func (s *Server) handleAPIEdit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	code := strings.TrimSpace(req.Code)
+
+if fs := secrets.Scan(code); len(fs) > 0 {
+	writeSecretBlock(w, fs)
+	return
+}
+
 	if code == "" {
 		http.Error(w, "code empty", http.StatusBadRequest)
 		return

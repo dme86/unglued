@@ -14,6 +14,55 @@ button{cursor:pointer;font-weight:600}
 .card{background:var(--card);padding:20px;border:1px solid var(--border);border-radius:16px;box-shadow:0 6px 20px rgba(0,0,0,.12)}
 a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
 .actions{display:flex;gap:12px;align-items:center;justify-content:flex-end}
+
+/* Themed modal */
+dialog.modal { 
+  padding: 0;
+  border: 0;
+  background: transparent;       /* let our sheet define colors */
+  color-scheme: dark light;       /* play nice with UA controls */
+}
+dialog.modal::backdrop{
+  background: rgba(0,0,0,.55);
+  backdrop-filter: blur(2px);
+}
+
+/* The inner card */
+.modal .sheet{
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px 20px;
+  max-width: 720px;
+  box-shadow: 0 16px 60px rgba(0,0,0,.45);
+}
+
+/* Title + content */
+.modal h3{ margin: 0 0 .5rem 0; font-size: 18px }
+.modal .muted{
+  color: var(--muted);
+  background: rgba(255,255,255,.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Buttons */
+.modal .actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:12px }
+.modal .btn{
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--fg);
+  padding: .45rem .8rem;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.modal .btn:hover{ filter: brightness(1.05) }
+
+
 </style>
 <main>
   <h1>Edit <code>{{.ID}}</code></h1>
@@ -130,4 +179,45 @@ a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
   });
 })();
 </script>
+<script>
+(function(){
+  const form = document.querySelector('form[action*="/edit"]');
+  if (!form) return;
+
+  const dlg = document.getElementById('secDialog');
+  const detail = document.getElementById('secDetail');
+  const cancelBtn = document.getElementById('secCancel');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const action = form.getAttribute('action'); // /p/<id>/edit[?key=...]
+
+    const fd = new FormData(form);
+    fd.set('allow_secrets', '');
+
+    const res = await fetch(action, { method:'POST', body: fd, redirect:'manual' });
+
+    if (res.status === 303) { window.location = res.headers.get('Location'); return; }
+
+    const txt = await res.text();
+    if (res.status >= 400 && txt.startsWith('Blocked:')) {
+      detail.textContent = txt;
+      dlg.showModal();
+      proceed.onclick = async () => {
+        dlg.close();
+        fd.set('allow_secrets','1');
+        const res2 = await fetch(action, { method:'POST', body: fd, redirect:'manual' });
+        if (res2.status === 303) { window.location = res2.headers.get('Location'); return; }
+        if (res2.ok) location.reload(); else alert(await res2.text());
+      };
+      cancelBtn.onclick = () => dlg.close();
+      return;
+    }
+
+    if (res.status >= 400) { alert(txt); return; }
+    location.reload();
+  });
+})();
+</script>
+
 </main>

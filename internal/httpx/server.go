@@ -2,7 +2,8 @@ package httpx
 
 import (
 	"html/template"
-
+    "net/http"
+    "strings"
 	"unglued/internal/store"
 )
 
@@ -36,6 +37,16 @@ func NewServer(cfg Config, st *store.Store, index, view, edit *template.Template
 		EditTmpl:  edit,
 	}
 }
+
+func parseAnyForm(r *http.Request) error {
+	ct := r.Header.Get("Content-Type")
+	if strings.HasPrefix(ct, "multipart/form-data") {
+		// 16 MiB In-Memory, Rest geht in Tempfiles.
+		return r.ParseMultipartForm(16 << 20)
+	}
+	return r.ParseForm()
+}
+
 
 /*
 Lang-/Theme-Optionen zentral hier.
