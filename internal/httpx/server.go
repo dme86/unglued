@@ -38,6 +38,21 @@ func NewServer(cfg Config, st *store.Store, index, view, edit *template.Template
 	}
 }
 
+// HTTP bodies may include JSON or multipart framing beyond the paste content.
+const (
+	MaxPasteBytes   = 1 << 20
+	MaxRequestBytes = 2 << 20
+)
+
+func LimitRequestBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func parseAnyForm(r *http.Request) error {
 	ct := r.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "multipart/form-data") {
