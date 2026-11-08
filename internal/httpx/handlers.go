@@ -223,9 +223,15 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	canEdit := s.canEditPaste(r, p)
 	editURL := ""
-	if p.Editable {
-		editURL = "/p/" + p.ID + "/edit?key=" + p.EditKey
+	if canEdit {
+		editURL = "/p/" + p.ID + "/edit"
+		// Preserve an explicitly supplied edit link, but never reveal the key
+		// to a reader who only knows the public paste URL.
+		if r.URL.Query().Get("key") == p.EditKey {
+			editURL += "?key=" + p.EditKey
+		}
 	}
 	data := map[string]any{
 		"ID":        p.ID,
@@ -242,7 +248,7 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 		"VTime":      currVer.At.Format("2006-01-02 15:04:05 -0700"),
 
 		"Editable": p.Editable,
-		"CanEdit":  s.canEditPaste(r, p),
+		"CanEdit":  canEdit,
 		"EditURL":  editURL,
 	}
 	_ = s.ViewTmpl.Execute(w, data)
