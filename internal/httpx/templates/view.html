@@ -109,11 +109,11 @@ a:hover{text-decoration:underline}
         if(part.indexOf('-') !== -1){
           var ab = part.split('-',2); var a = +ab[0], b = +ab[1];
           if(Number.isInteger(a) && Number.isInteger(b)){
-            var lo = Math.min(a,b), hi = Math.max(a,b);
+            var lo = Math.max(1,Math.min(a,b)), hi = Math.min(10000,Math.max(a,b));
             for(var i=lo;i<=hi;i++) set.add(i);
           }
         } else {
-          var n = +part; if(Number.isInteger(n)) set.add(n);
+          var n = +part; if(Number.isInteger(n) && n > 0 && n <= 10000) set.add(n);
         }
       }
       return set;

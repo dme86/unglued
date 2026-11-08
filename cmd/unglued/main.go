@@ -40,7 +40,14 @@ func main() {
 	httpx.MountRoutes(r, srv)
 
 	log.Printf("HTTP: http://localhost%s\n", listenAddr)
-	httpSrv := &http.Server{Addr: listenAddr, Handler: r}
+	httpSrv := &http.Server{
+		Addr: listenAddr, Handler: r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
 
 	go func() {
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

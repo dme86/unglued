@@ -7,6 +7,7 @@ import (
 )
 
 func MountRoutes(r chi.Router, s *Server) {
+	r.Use(LimitRequestBody)
 	r.Get("/", s.handleIndex)
 	r.Post("/paste", s.handleCreate)
 	r.Get("/p/{id}", s.handleView)

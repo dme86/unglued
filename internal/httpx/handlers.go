@@ -21,6 +21,8 @@ import (
 	"unglued/internal/secrets"
 )
 
+var ErrPasteTooLarge = errors.New("paste exceeds 1 MiB")
+
 /* ======================
    Konfiguration & Helper
    ====================== */
@@ -71,6 +73,9 @@ func (s *Server) canEditPaste(r *http.Request, p model.Paste) bool {
 }
 
 func (s *Server) buildPaste(code, lang, ttl, theme string, editable bool, author string) (model.Paste, error) {
+	if len(code) > MaxPasteBytes {
+		return model.Paste{}, ErrPasteTooLarge
+	}
 	code = strings.TrimSpace(code)
 	if code == "" {
 		return model.Paste{}, fmt.Errorf("Code darf nicht leer sein")
@@ -152,7 +157,7 @@ func writeSecretBlock(w http.ResponseWriter, fs []secrets.Finding) {
 
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if err := parseAnyForm(r); err != nil {
-	http.Error(w, "Bad form", http.StatusBadRequest)
+	writeBodyError(w, err)
 	return
 }
 
@@ -175,10 +180,13 @@ if fs := secrets.Scan(code); len(fs) > 0 {
 
 	p, err := s.buildPaste(code, lang, ttl, theme, editable, author)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writePasteError(w, err)
 		return
 	}
-	s.Store.Put(p)
+	if err := s.Store.Put(p); err != nil {
+		writeStoreWriteError(w, err)
+		return
+	}
 
 	// Cookies
 	if author != "" {
@@ -314,13 +322,17 @@ func (s *Server) handleEditSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := parseAnyForm(r); err != nil {
-	http.Error(w, "Bad form", http.StatusBadRequest)
+	writeBodyError(w, err)
 	return
 }
 
 	code := strings.TrimSpace(r.FormValue("code"))
 	lang := s.normalizeLang(strings.TrimSpace(r.FormValue("lang")))
 	author := strings.TrimSpace(r.FormValue("author"))
+	if len(code) > MaxPasteBytes {
+		writePasteError(w, ErrPasteTooLarge)
+		return
+	}
 
 	if fs := secrets.Scan(code); len(fs) > 0 {
 		writeSecretBlock(w, fs)
@@ -368,7 +380,11 @@ func (s *Server) handleAPIPaste(w http.ResponseWriter, r *http.Request) {
 	var code, lang, ttl, theme, author string
 	var editable bool
 
-	body, _ := io.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeBodyError(w, err)
+		return
+	}
 	if strings.HasPrefix(ct, "application/json") ||
 		(len(body) > 0 && bytesHasJSONPrefix(body)) {
 		var req apiReq
@@ -389,10 +405,13 @@ func (s *Server) handleAPIPaste(w http.ResponseWriter, r *http.Request) {
 
 	p, err := s.buildPaste(code, lang, ttl, theme, editable, author)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writePasteError(w, err)
 		return
 	}
-	s.Store.Put(p)
+	if err := s.Store.Put(p); err != nil {
+		writeStoreWriteError(w, err)
+		return
+	}
 
 	// Cookies
 	if author != "" {
@@ -447,11 +466,15 @@ func (s *Server) handleAPIEdit(w http.ResponseWriter, r *http.Request) {
 
 	var req apiReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		writeBodyError(w, err)
 		return
 	}
 
 	code := strings.TrimSpace(req.Code)
+	if len(code) > MaxPasteBytes {
+		writePasteError(w, ErrPasteTooLarge)
+		return
+	}
 
 if fs := secrets.Scan(code); len(fs) > 0 {
 	writeSecretBlock(w, fs)
@@ -489,6 +512,34 @@ if fs := secrets.Scan(code); len(fs) > 0 {
 	})
 }
 
+func writeBodyError(w http.ResponseWriter, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		http.Error(w, "Request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	http.Error(w, "Invalid request body", http.StatusBadRequest)
+}
+
+func writePasteError(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrPasteTooLarge) {
+		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusBadRequest)
+}
+
+func writeStoreWriteError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrStoreFull):
+		http.Error(w, "Paste storage limit reached", http.StatusInsufficientStorage)
+	case errors.Is(err, store.ErrVersionLimit), errors.Is(err, store.ErrConflict):
+		http.Error(w, err.Error(), http.StatusConflict)
+	default:
+		http.Error(w, "Paste storage error", http.StatusInternalServerError)
+	}
+}
+
 // saveEdit is shared by browser and API editing so that both commit changes
 // using one version-checked atomic Store.Update.
 func (s *Server) saveEdit(id string, expected int, code, lang, author string) (model.Paste, error) {
@@ -514,6 +565,10 @@ func writeEditError(w http.ResponseWriter, r *http.Request, err error) {
 		http.NotFound(w, r)
 	case errors.Is(err, store.ErrConflict):
 		http.Error(w, "Paste changed; reload before editing", http.StatusConflict)
+	case errors.Is(err, store.ErrVersionLimit):
+		http.Error(w, "Paste version limit reached", http.StatusConflict)
+	case errors.Is(err, store.ErrStoreFull):
+		http.Error(w, "Paste storage limit reached", http.StatusInsufficientStorage)
 	default:
 		http.Error(w, "Failed to update paste", http.StatusInternalServerError)
 	}
