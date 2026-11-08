@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"unglued/internal/model"
+	"unglued/internal/store"
 	"unglued/internal/render"
 	"unglued/internal/util"
 	"unglued/internal/secrets"
@@ -109,6 +111,7 @@ func (s *Server) buildPaste(code, lang, ttl, theme string, editable bool, author
    ============= */
 
 type apiReq struct {
+	BaseVersion *int `json:"base_version,omitempty"`
 	Code     string `json:"code"`
 	Lang     string `json:"lang"`
 	TTL      string `json:"ttl"`
@@ -295,6 +298,7 @@ func (s *Server) handleEditForm(w http.ResponseWriter, r *http.Request) {
 		"ID": id, "Code": code, "Langs": Langs, "Lang": curr.Lang,
 		"Author": author,
 		"Key":    key,
+		"Version": len(p.Versions),
 	})
 }
 
@@ -314,54 +318,45 @@ func (s *Server) handleEditSave(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-	now := time.Now()
 	code := strings.TrimSpace(r.FormValue("code"))
 	lang := s.normalizeLang(strings.TrimSpace(r.FormValue("lang")))
 	author := strings.TrimSpace(r.FormValue("author"))
 
-if fs := secrets.Scan(code); len(fs) > 0 {
-	writeSecretBlock(w, fs)
-	return
-}
-
-
+	if fs := secrets.Scan(code); len(fs) > 0 {
+		writeSecretBlock(w, fs)
+		return
+	}
 	if code == "" {
 		http.Error(w, "Code darf nicht leer sein", http.StatusBadRequest)
 		return
 	}
 
-	last := p.Versions[len(p.Versions)-1]
-	prevCode, _ := util.GzipDecode(last.ZCode)
-
-	// nur neue Version, wenn sich etwas geändert hat
-	if code != prevCode || lang != last.Lang {
-		p.Versions = append(p.Versions, model.Version{
-			ZCode:  util.GzipEncode(code),
-			Lang:   lang,
-			Author: author,
-			At:     now,
-		})
-		// (optional) Deckeln:
-		// if len(p.Versions) > maxVersions { p.Versions = p.Versions[len(p.Versions)-maxVersions:] }
+	// The browser submits the version it originally edited. Older clients
+	// without the field still get atomic compare-and-swap protection.
+	expected := len(p.Versions)
+	if raw := strings.TrimSpace(r.FormValue("version")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			http.Error(w, "Invalid version", http.StatusBadRequest)
+			return
+		}
+		expected = n
 	}
-
-	p.Code = code
-	p.Lang = lang
-	if author != "" {
-		p.Author = author
+	updated, err := s.saveEdit(id, expected, code, lang, author)
+	if err != nil {
+		writeEditError(w, r, err)
+		return
 	}
-	p.UpdatedAt = now
-	s.Store.Put(p)
 
 	// Cookies
 	if author != "" {
 		util.WriteCookie(w, "np_author", author, 180*24*time.Hour)
 	}
-	if k := r.URL.Query().Get("key"); k != "" && k == p.EditKey {
-		util.WriteCookie(w, "npk_"+p.ID, p.EditKey, 365*24*time.Hour)
+	if k := r.URL.Query().Get("key"); k != "" && k == updated.EditKey {
+		util.WriteCookie(w, "npk_"+updated.ID, updated.EditKey, 365*24*time.Hour)
 	}
 
-	http.Redirect(w, r, "/p/"+p.ID+"?v="+strconv.Itoa(len(p.Versions)), http.StatusSeeOther)
+	http.Redirect(w, r, "/p/"+updated.ID+"?v="+strconv.Itoa(len(updated.Versions)), http.StatusSeeOther)
 }
 
 func (s *Server) handleAPIPaste(w http.ResponseWriter, r *http.Request) {
@@ -469,28 +464,18 @@ if fs := secrets.Scan(code); len(fs) > 0 {
 	}
 	lang := s.normalizeLang(req.Lang)
 	author := strings.TrimSpace(req.Author)
-	now := time.Now()
 
-	// letzte Version zum Vergleich
-	last := p.Versions[len(p.Versions)-1]
-	prevCode, _ := util.GzipDecode(last.ZCode)
-
-	if code != prevCode || lang != last.Lang {
-		p.Versions = append(p.Versions, model.Version{
-			ZCode:  util.GzipEncode(code),
-			Lang:   lang,
-			Author: author,
-			At:     now,
-		})
+	// API clients may pin the version they started editing; concurrent
+	// requests without it still use compare-and-swap against the read.
+	expected := len(p.Versions)
+	if req.BaseVersion != nil {
+		expected = *req.BaseVersion
 	}
-
-	p.Code = code
-	p.Lang = lang
-	if author != "" {
-		p.Author = author
+	updated, err := s.saveEdit(id, expected, code, lang, author)
+	if err != nil {
+		writeEditError(w, r, err)
+		return
 	}
-	p.UpdatedAt = now
-	s.Store.Put(p)
 
 	if author != "" {
 		util.WriteCookie(w, "np_author", author, 180*24*time.Hour)
@@ -499,9 +484,39 @@ if fs := secrets.Scan(code); len(fs) > 0 {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"id":       p.ID,
-		"versions": len(p.Versions),
-		"url":      s.makeURL(r, "/p/"+p.ID+"?v="+strconv.Itoa(len(p.Versions))),
+		"versions": len(updated.Versions),
+		"url":      s.makeURL(r, "/p/"+updated.ID+"?v="+strconv.Itoa(len(updated.Versions))),
 	})
+}
+
+// saveEdit is shared by browser and API editing so that both commit changes
+// using one version-checked atomic Store.Update.
+func (s *Server) saveEdit(id string, expected int, code, lang, author string) (model.Paste, error) {
+	now := time.Now()
+	return s.Store.Update(id, expected, func(p *model.Paste) {
+		if code != p.Code || lang != p.Lang {
+			p.Versions = append(p.Versions, model.Version{
+				ZCode: util.GzipEncode(code), Lang: lang, Author: author, At: now,
+			})
+		}
+		p.Code = code
+		p.Lang = lang
+		if author != "" {
+			p.Author = author
+		}
+		p.UpdatedAt = now
+	})
+}
+
+func writeEditError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		http.NotFound(w, r)
+	case errors.Is(err, store.ErrConflict):
+		http.Error(w, "Paste changed; reload before editing", http.StatusConflict)
+	default:
+		http.Error(w, "Failed to update paste", http.StatusInternalServerError)
+	}
 }
 
 /* ================
