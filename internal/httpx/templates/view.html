@@ -78,7 +78,7 @@ a:hover{text-decoration:underline}
           <a class="button" href="?t=light{{if .HL}}&hl={{.HL}}{{end}}{{if .HasHistory}}&v={{.VIndex}}{{end}}" title="zu Light wechseln">Light</a>
           <span class="badge">• Aktuell: Dark</span>
         {{end}}
-	{{if .Editable}} • <a class="button" href="{{.EditURL}}">Editieren</a>{{end}}
+	{{if .CanEdit}} • <a class="button" href="{{.EditURL}}">Editieren</a>{{end}}
       </nav>
     </div>
   </header>
